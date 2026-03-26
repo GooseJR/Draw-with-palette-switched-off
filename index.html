@@ -217,6 +217,53 @@
     margin-top: 8px;
   }
 
+  /* Modal */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal-panel {
+    background: #1e2a3a;
+    border-radius: 12px;
+    padding: 24px;
+    width: 90%;
+    max-width: 520px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .modal-panel h3 {
+    color: #fff;
+    margin-bottom: 12px;
+    font-size: 1.1rem;
+  }
+  .modal-panel textarea {
+    width: 100%;
+    min-height: 160px;
+    background: #0f0f23;
+    border: 1px solid #333;
+    border-radius: 8px;
+    color: #e0e0e0;
+    padding: 12px;
+    font-family: monospace;
+    font-size: 0.9rem;
+    resize: vertical;
+    margin-bottom: 14px;
+  }
+  .modal-panel textarea:focus {
+    outline: none;
+    border-color: #5c6bc0;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
   /* Responsive */
   @media (max-width: 640px) {
     header h1 { font-size: 1.5rem; }
@@ -248,8 +295,11 @@
     <div class="palette-actions">
       <button class="btn btn-primary" id="btn-add">+ 添加颜色</button>
       <button class="btn btn-secondary" id="btn-random">随机调色板</button>
+      <button class="btn btn-secondary" id="btn-import-image">导入参考图</button>
+      <button class="btn btn-secondary" id="btn-import-md">导入配置</button>
       <button class="btn btn-secondary" id="btn-reset">重置</button>
     </div>
+    <input type="file" id="ref-image-input" accept="image/*" style="display:none;">
   </div>
 
   <!-- LUT gradient preview -->
@@ -291,6 +341,22 @@
 
 </div>
 
+<!-- Markdown import modal -->
+<div class="modal-overlay" id="import-modal">
+  <div class="modal-panel">
+    <h3>导入调色板配置</h3>
+    <textarea id="import-textarea" placeholder="粘贴包含颜色值的文本...">- #1a237e 深蓝
+- #e91e63 品红
+- #ff9800 橙色
+- #00bcd4 青色
+- #ffeb3b 黄色</textarea>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btn-import-cancel">取消</button>
+      <button class="btn btn-primary" id="btn-import-confirm">导入</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function() {
   'use strict';
@@ -329,6 +395,13 @@
   const lutPreviewSection = document.getElementById('lut-preview-section');
   const btnDownloadResult = document.getElementById('btn-download-result');
   const btnDownloadGray = document.getElementById('btn-download-gray');
+  const btnImportImage = document.getElementById('btn-import-image');
+  const refImageInput = document.getElementById('ref-image-input');
+  const btnImportMd = document.getElementById('btn-import-md');
+  const importModal = document.getElementById('import-modal');
+  const importTextarea = document.getElementById('import-textarea');
+  const btnImportCancel = document.getElementById('btn-import-cancel');
+  const btnImportConfirm = document.getElementById('btn-import-confirm');
 
   // ---- Color utilities ----
   function computeLuminance(r, g, b) {
@@ -571,7 +644,7 @@
   }
 
   function randomizePalette() {
-    const count = 5 + Math.floor(Math.random() * 4); // 5-8 colors
+    const count = Math.max(2, state.palette.length); // preserve current count
     state.palette = [];
     for (let i = 0; i < count; i++) {
       const h = Math.random() * 360;
@@ -587,6 +660,147 @@
     state.palette = DEFAULT_PALETTE.map(c => ({ ...c }));
     renderPalette();
     processAndRender();
+  }
+
+  // ---- K-Means color extraction from reference image ----
+  function extractColorsFromImage(img, k) {
+    // Downsample to small canvas for speed
+    const maxSample = 100;
+    let w = img.naturalWidth || img.width;
+    let h = img.naturalHeight || img.height;
+    const scale = Math.min(1, maxSample / Math.max(w, h));
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h).data;
+
+    // Collect pixels, skip near-black/near-white
+    const pixels = [];
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+      if (a < 128) continue; // skip transparent
+      const lum = computeLuminance(r, g, b);
+      if (lum > 5 && lum < 250) {
+        pixels.push([r, g, b]);
+      }
+    }
+
+    // Fallback: if too few pixels after filtering, use all
+    if (pixels.length < k * 2) {
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] >= 128) pixels.push([data[i], data[i + 1], data[i + 2]]);
+      }
+    }
+
+    if (pixels.length === 0) return null;
+
+    // K-Means initialization: pick k random pixels as centers
+    const centers = [];
+    const used = new Set();
+    for (let i = 0; i < k; i++) {
+      let idx;
+      let attempts = 0;
+      do {
+        idx = Math.floor(Math.random() * pixels.length);
+        attempts++;
+      } while (used.has(idx) && attempts < 100);
+      used.add(idx);
+      centers.push([...pixels[idx]]);
+    }
+
+    // K-Means iterations
+    const maxIter = 15;
+    for (let iter = 0; iter < maxIter; iter++) {
+      // Assign pixels to nearest center
+      const clusters = Array.from({ length: k }, () => []);
+      for (const px of pixels) {
+        let minDist = Infinity;
+        let best = 0;
+        for (let c = 0; c < k; c++) {
+          const dr = px[0] - centers[c][0];
+          const dg = px[1] - centers[c][1];
+          const db = px[2] - centers[c][2];
+          const dist = dr * dr + dg * dg + db * db;
+          if (dist < minDist) { minDist = dist; best = c; }
+        }
+        clusters[best].push(px);
+      }
+
+      // Update centers
+      let converged = true;
+      for (let c = 0; c < k; c++) {
+        if (clusters[c].length === 0) continue;
+        const sumR = clusters[c].reduce((s, p) => s + p[0], 0);
+        const sumG = clusters[c].reduce((s, p) => s + p[1], 0);
+        const sumB = clusters[c].reduce((s, p) => s + p[2], 0);
+        const n = clusters[c].length;
+        const newR = Math.round(sumR / n);
+        const newG = Math.round(sumG / n);
+        const newB = Math.round(sumB / n);
+        if (newR !== centers[c][0] || newG !== centers[c][1] || newB !== centers[c][2]) {
+          converged = false;
+        }
+        centers[c] = [newR, newG, newB];
+      }
+      if (converged) break;
+    }
+
+    // Convert to palette format, filter out empty clusters
+    const result = [];
+    const seen = new Set();
+    for (const c of centers) {
+      const key = c.join(',');
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({ r: c[0], g: c[1], b: c[2] });
+      }
+    }
+    return result.length >= 2 ? result : null;
+  }
+
+  // ---- Markdown palette parsing ----
+  function parseColorsFromMarkdown(text) {
+    const colors = [];
+    const seen = new Set();
+
+    // Match 6-digit hex
+    const re6 = /#([0-9a-fA-F]{6})\b/g;
+    let m;
+    while ((m = re6.exec(text)) !== null) {
+      const hex = m[1].toLowerCase();
+      if (!seen.has(hex)) {
+        seen.add(hex);
+        colors.push(hexToRgb(hex));
+      }
+    }
+
+    // Match 3-digit hex (only if no 6-digit found, to avoid double-matching)
+    if (colors.length === 0) {
+      const re3 = /#([0-9a-fA-F]{3})\b/g;
+      while ((m = re3.exec(text)) !== null) {
+        const short = m[1].toLowerCase();
+        const full = short[0] + short[0] + short[1] + short[1] + short[2] + short[2];
+        if (!seen.has(full)) {
+          seen.add(full);
+          colors.push(hexToRgb(full));
+        }
+      }
+    }
+
+    return colors;
+  }
+
+  // ---- Modal helpers ----
+  function showImportModal() {
+    importModal.classList.add('active');
+  }
+  function hideImportModal() {
+    importModal.classList.remove('active');
   }
 
   // ---- Image upload ----
@@ -663,6 +877,56 @@
   });
   btnRandom.addEventListener('click', randomizePalette);
   btnReset.addEventListener('click', resetPalette);
+
+  // Reference image import
+  btnImportImage.addEventListener('click', () => refImageInput.click());
+  refImageInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.max(2, state.palette.length);
+      const colors = extractColorsFromImage(img, k);
+      URL.revokeObjectURL(url);
+      if (!colors) {
+        alert('无法从参考图中提取足够的颜色');
+        return;
+      }
+      state.palette = colors;
+      renderPalette();
+      processAndRender();
+    };
+    img.onerror = () => {
+      alert('图片加载失败');
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+    refImageInput.value = '';
+  });
+
+  // Markdown import modal
+  btnImportMd.addEventListener('click', showImportModal);
+  btnImportCancel.addEventListener('click', hideImportModal);
+  importModal.addEventListener('click', (e) => {
+    if (e.target === importModal) hideImportModal();
+  });
+  btnImportConfirm.addEventListener('click', () => {
+    const text = importTextarea.value;
+    const colors = parseColorsFromMarkdown(text);
+    if (colors.length === 0) {
+      alert('未找到有效的颜色值（格式：#rrggbb）');
+      return;
+    }
+    if (colors.length < 2) {
+      alert('至少需要 2 个颜色');
+      return;
+    }
+    state.palette = colors;
+    renderPalette();
+    processAndRender();
+    hideImportModal();
+  });
 
   // Download buttons
   btnDownloadResult.addEventListener('click', () => {
