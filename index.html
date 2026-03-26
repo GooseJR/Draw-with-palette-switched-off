@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>关掉调色板画画</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+    line-height: 1.6;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 16px;
+  }
+
+  /* Header */
+  header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  header h1 {
+    font-size: 2rem;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+  header p {
+    color: #aaa;
+    font-size: 0.95rem;
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  /* Section titles */
+  .section-title {
+    font-size: 1.1rem;
+    color: #ccc;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed #444;
+    border-radius: 12px;
+    padding: 48px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    margin-bottom: 32px;
+    background: #16213e;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: #7c83ff;
+    background: #1a2744;
+  }
+  .upload-zone .icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+    display: block;
+    opacity: 0.6;
+  }
+  .upload-zone .text {
+    color: #888;
+    font-size: 0.95rem;
+  }
+  #file-input { display: none; }
+
+  /* Palette editor */
+  .palette-section {
+    margin-bottom: 32px;
+  }
+  .palette-colors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .swatch {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 2px solid #333;
+    transition: border-color 0.2s;
+  }
+  .swatch:hover { border-color: #7c83ff; }
+  .swatch input[type="color"] {
+    position: absolute;
+    top: -8px; left: -8px;
+    width: calc(100% + 16px);
+    height: calc(100% + 16px);
+    border: none;
+    cursor: pointer;
+    background: none;
+    padding: 0;
+  }
+  .swatch input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+  .swatch input[type="color"]::-webkit-color-swatch { border: none; }
+  .swatch input[type="color"]::-moz-color-swatch { border: none; }
+  .swatch .delete-btn {
+    position: absolute;
+    top: -2px; right: -2px;
+    width: 18px; height: 18px;
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    cursor: pointer;
+    display: none;
+    z-index: 2;
+  }
+  .swatch:hover .delete-btn { display: block; }
+  .swatch .delete-btn:hover { background: #e53935; }
+  .swatch .lum-label {
+    position: absolute;
+    bottom: 1px; left: 0; right: 0;
+    text-align: center;
+    font-size: 9px;
+    color: #fff;
+    text-shadow: 0 0 3px #000, 0 0 3px #000;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .palette-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Buttons */
+  .btn {
+    padding: 8px 18px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s, opacity 0.2s;
+    color: #fff;
+  }
+  .btn-primary { background: #5c6bc0; }
+  .btn-primary:hover { background: #7c83ff; }
+  .btn-secondary { background: #37474f; }
+  .btn-secondary:hover { background: #546e7a; }
+  .btn-success { background: #2e7d32; }
+  .btn-success:hover { background: #43a047; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Preview area */
+  .preview-section {
+    margin-bottom: 32px;
+  }
+  .preview-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .preview-item {
+    flex: 1 1 300px;
+    min-width: 0;
+  }
+  .preview-item h3 {
+    font-size: 0.95rem;
+    color: #aaa;
+    margin-bottom: 8px;
+    text-align: center;
+  }
+  .canvas-wrapper {
+    background: #0f0f23;
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+  }
+  .canvas-wrapper canvas {
+    max-width: 100%;
+    height: auto;
+    display: block;
+  }
+  .canvas-wrapper .placeholder {
+    color: #555;
+    font-size: 0.9rem;
+  }
+
+  /* Download area */
+  .download-section {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  .download-section .btn {
+    margin: 0 6px;
+  }
+
+  /* LUT gradient preview */
+  .lut-preview {
+    margin-bottom: 32px;
+  }
+  .lut-bar {
+    height: 24px;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    header h1 { font-size: 1.5rem; }
+    .upload-zone { padding: 32px 16px; }
+    .preview-item { flex: 1 1 100%; }
+    .swatch { width: 40px; height: 40px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>关掉调色板画画</h1>
+    <p>上传一张图片，选择自定义色盘或随机生成颜色，自动将图片的明暗关系映射到你选的颜色上，复现短视频中的神奇效果</p>
+  </header>
+
+  <!-- Upload -->
+  <div class="upload-zone" id="upload-zone">
+    <span class="icon">&#128444;</span>
+    <div class="text">拖放图片到此处，或点击上传</div>
+  </div>
+  <input type="file" id="file-input" accept="image/*">
+
+  <!-- Palette -->
+  <div class="palette-section">
+    <div class="section-title">调色板</div>
+    <div class="palette-colors" id="palette-colors"></div>
+    <div class="palette-actions">
+      <button class="btn btn-primary" id="btn-add">+ 添加颜色</button>
+      <button class="btn btn-secondary" id="btn-random">随机调色板</button>
+      <button class="btn btn-secondary" id="btn-reset">重置</button>
+    </div>
+  </div>
+
+  <!-- LUT gradient preview -->
+  <div class="lut-preview" id="lut-preview-section" style="display:none;">
+    <div class="section-title">亮度映射预览</div>
+    <canvas id="lut-bar" class="lut-bar" width="512" height="24"></canvas>
+  </div>
+
+  <!-- Preview -->
+  <div class="preview-section" id="preview-section" style="display:none;">
+    <div class="section-title">效果预览</div>
+    <div class="preview-grid">
+      <div class="preview-item">
+        <h3>原图</h3>
+        <div class="canvas-wrapper">
+          <canvas id="canvas-original"></canvas>
+        </div>
+      </div>
+      <div class="preview-item">
+        <h3>灰度图</h3>
+        <div class="canvas-wrapper">
+          <canvas id="canvas-grayscale"></canvas>
+        </div>
+      </div>
+      <div class="preview-item">
+        <h3>效果图</h3>
+        <div class="canvas-wrapper">
+          <canvas id="canvas-result"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Download -->
+  <div class="download-section" id="download-section" style="display:none;">
+    <button class="btn btn-success" id="btn-download-result">下载效果图</button>
+    <button class="btn btn-secondary" id="btn-download-gray">下载灰度图</button>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ---- State ----
+  const state = {
+    sourceImage: null,  // HTMLImageElement
+    palette: [],        // Array of {r, g, b}
+    lut: null,          // Array[256] of [r, g, b]
+  };
+
+  const MAX_DIM = 4096;
+
+  // ---- Default palette ----
+  const DEFAULT_PALETTE = [
+    { r: 26,  g: 35,  b: 126 }, // #1a237e
+    { r: 233, g: 30,  b: 99  }, // #e91e63
+    { r: 255, g: 152, b: 0   }, // #ff9800
+    { r: 0,   g: 188, b: 212 }, // #00bcd4
+    { r: 255, g: 235, b: 59  }, // #ffeb3b
+  ];
+
+  // ---- DOM refs ----
+  const uploadZone = document.getElementById('upload-zone');
+  const fileInput = document.getElementById('file-input');
+  const paletteContainer = document.getElementById('palette-colors');
+  const btnAdd = document.getElementById('btn-add');
+  const btnRandom = document.getElementById('btn-random');
+  const btnReset = document.getElementById('btn-reset');
+  const canvasOriginal = document.getElementById('canvas-original');
+  const canvasGrayscale = document.getElementById('canvas-grayscale');
+  const canvasResult = document.getElementById('canvas-result');
+  const lutBarCanvas = document.getElementById('lut-bar');
+  const previewSection = document.getElementById('preview-section');
+  const downloadSection = document.getElementById('download-section');
+  const lutPreviewSection = document.getElementById('lut-preview-section');
+  const btnDownloadResult = document.getElementById('btn-download-result');
+  const btnDownloadGray = document.getElementById('btn-download-gray');
+
+  // ---- Color utilities ----
+  function computeLuminance(r, g, b) {
+    return Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+  }
+
+  function rgbToHex(r, g, b) {
+    return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
+  }
+
+  function hexToRgb(hex) {
+    const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (!m) return { r: 0, g: 0, b: 0 };
+    return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+  }
+
+  function hslToRgb(h, s, l) {
+    // h: 0-360, s: 0-1, l: 0-1
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r, g, b;
+    if (h < 60)       { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else              { r = c; g = 0; b = x; }
+    return {
+      r: Math.round((r + m) * 255),
+      g: Math.round((g + m) * 255),
+      b: Math.round((b + m) * 255)
+    };
+  }
+
+  // ---- LUT building ----
+  function buildLUT(palette) {
+    if (palette.length === 0) return null;
+
+    // Compute luminance for each color and sort
+    const entries = palette.map(c => ({
+      r: c.r, g: c.g, b: c.b,
+      lum: computeLuminance(c.r, c.g, c.b)
+    }));
+    entries.sort((a, b) => a.lum - b.lum);
+
+    // Deduplicate same-luminance entries (average their RGB)
+    const deduped = [];
+    for (const entry of entries) {
+      if (deduped.length > 0 && deduped[deduped.length - 1].lum === entry.lum) {
+        const last = deduped[deduped.length - 1];
+        last.r = Math.round((last.r + entry.r) / 2);
+        last.g = Math.round((last.g + entry.g) / 2);
+        last.b = Math.round((last.b + entry.b) / 2);
+      } else {
+        deduped.push({ ...entry });
+      }
+    }
+
+    const lut = new Array(256);
+
+    // Single color case
+    if (deduped.length === 1) {
+      const c = [deduped[0].r, deduped[0].g, deduped[0].b];
+      for (let i = 0; i < 256; i++) lut[i] = c;
+      return lut;
+    }
+
+    // Clamp below darkest
+    for (let g = 0; g <= deduped[0].lum; g++) {
+      lut[g] = [deduped[0].r, deduped[0].g, deduped[0].b];
+    }
+
+    // Interpolate between adjacent entries
+    for (let i = 0; i < deduped.length - 1; i++) {
+      const lo = deduped[i];
+      const hi = deduped[i + 1];
+      const range = hi.lum - lo.lum;
+      for (let g = lo.lum; g <= hi.lum; g++) {
+        const t = range === 0 ? 0 : (g - lo.lum) / range;
+        lut[g] = [
+          Math.round(lo.r + t * (hi.r - lo.r)),
+          Math.round(lo.g + t * (hi.g - lo.g)),
+          Math.round(lo.b + t * (hi.b - lo.b))
+        ];
+      }
+    }
+
+    // Clamp above brightest
+    const last = deduped[deduped.length - 1];
+    for (let g = last.lum; g < 256; g++) {
+      lut[g] = [last.r, last.g, last.b];
+    }
+
+    return lut;
+  }
+
+  // ---- Canvas helpers ----
+  function getScaledDimensions(img) {
+    let w = img.naturalWidth || img.width;
+    let h = img.naturalHeight || img.height;
+    if (w > MAX_DIM || h > MAX_DIM) {
+      const scale = MAX_DIM / Math.max(w, h);
+      w = Math.round(w * scale);
+      h = Math.round(h * scale);
+    }
+    return { w, h };
+  }
+
+  function drawImageToCanvas(img, canvas) {
+    const { w, h } = getScaledDimensions(img);
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    return ctx;
+  }
+
+  function renderGrayscale(srcCanvas, dstCanvas) {
+    const w = srcCanvas.width;
+    const h = srcCanvas.height;
+    dstCanvas.width = w;
+    dstCanvas.height = h;
+    const srcCtx = srcCanvas.getContext('2d');
+    const dstCtx = dstCanvas.getContext('2d');
+    const srcData = srcCtx.getImageData(0, 0, w, h);
+    const dstData = dstCtx.createImageData(w, h);
+    const src = srcData.data;
+    const dst = dstData.data;
+    for (let i = 0; i < src.length; i += 4) {
+      const gray = computeLuminance(src[i], src[i + 1], src[i + 2]);
+      dst[i] = gray;
+      dst[i + 1] = gray;
+      dst[i + 2] = gray;
+      dst[i + 3] = src[i + 3];
+    }
+    dstCtx.putImageData(dstData, 0, 0);
+  }
+
+  function applyLUT(srcCanvas, dstCanvas, lut) {
+    const w = srcCanvas.width;
+    const h = srcCanvas.height;
+    dstCanvas.width = w;
+    dstCanvas.height = h;
+    const srcCtx = srcCanvas.getContext('2d');
+    const dstCtx = dstCanvas.getContext('2d');
+    const srcData = srcCtx.getImageData(0, 0, w, h);
+    const dstData = dstCtx.createImageData(w, h);
+    const src = srcData.data;
+    const dst = dstData.data;
+    for (let i = 0; i < src.length; i += 4) {
+      const gray = computeLuminance(src[i], src[i + 1], src[i + 2]);
+      const mapped = lut[gray];
+      dst[i] = mapped[0];
+      dst[i + 1] = mapped[1];
+      dst[i + 2] = mapped[2];
+      dst[i + 3] = src[i + 3];
+    }
+    dstCtx.putImageData(dstData, 0, 0);
+  }
+
+  function renderLUTBar(lut) {
+    if (!lut) return;
+    lutPreviewSection.style.display = '';
+    const canvas = lutBarCanvas;
+    const w = 512;
+    const h = 24;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    for (let x = 0; x < w; x++) {
+      const idx = Math.round((x / (w - 1)) * 255);
+      const c = lut[idx];
+      ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+      ctx.fillRect(x, 0, 1, h);
+    }
+  }
+
+  // ---- Main processing ----
+  function processAndRender() {
+    const lut = buildLUT(state.palette);
+    state.lut = lut;
+
+    renderLUTBar(lut);
+
+    if (!state.sourceImage || !lut) return;
+
+    previewSection.style.display = '';
+    downloadSection.style.display = '';
+
+    drawImageToCanvas(state.sourceImage, canvasOriginal);
+    renderGrayscale(canvasOriginal, canvasGrayscale);
+    applyLUT(canvasOriginal, canvasResult, lut);
+  }
+
+  // ---- Palette UI ----
+  function renderPalette() {
+    paletteContainer.innerHTML = '';
+    state.palette.forEach((color, idx) => {
+      const swatch = document.createElement('div');
+      swatch.className = 'swatch';
+
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = rgbToHex(color.r, color.g, color.b);
+      input.addEventListener('input', (e) => {
+        state.palette[idx] = hexToRgb(e.target.value);
+        updateLumLabels();
+        processAndRender();
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'delete-btn';
+      delBtn.textContent = '\u00d7';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.palette.length <= 2) return;
+        state.palette.splice(idx, 1);
+        renderPalette();
+        processAndRender();
+      });
+      if (state.palette.length <= 2) delBtn.style.display = 'none';
+
+      const lumLabel = document.createElement('span');
+      lumLabel.className = 'lum-label';
+      lumLabel.textContent = computeLuminance(color.r, color.g, color.b);
+
+      swatch.appendChild(input);
+      swatch.appendChild(delBtn);
+      swatch.appendChild(lumLabel);
+      paletteContainer.appendChild(swatch);
+    });
+  }
+
+  function updateLumLabels() {
+    const labels = paletteContainer.querySelectorAll('.lum-label');
+    state.palette.forEach((color, idx) => {
+      if (labels[idx]) labels[idx].textContent = computeLuminance(color.r, color.g, color.b);
+    });
+  }
+
+  function randomizePalette() {
+    const count = 5 + Math.floor(Math.random() * 4); // 5-8 colors
+    state.palette = [];
+    for (let i = 0; i < count; i++) {
+      const h = Math.random() * 360;
+      const s = 0.5 + Math.random() * 0.5;  // 0.5-1.0
+      const l = 0.1 + (i / (count - 1)) * 0.75; // spread lightness 0.1-0.85
+      state.palette.push(hslToRgb(h, s, l));
+    }
+    renderPalette();
+    processAndRender();
+  }
+
+  function resetPalette() {
+    state.palette = DEFAULT_PALETTE.map(c => ({ ...c }));
+    renderPalette();
+    processAndRender();
+  }
+
+  // ---- Image upload ----
+  function handleImageUpload(file) {
+    if (!file || !file.type.startsWith('image/')) {
+      alert('请上传图片文件');
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      state.sourceImage = img;
+      URL.revokeObjectURL(url);
+      processAndRender();
+    };
+    img.onerror = () => {
+      alert('图片加载失败，请重试');
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  }
+
+  // ---- Download ----
+  function downloadCanvas(canvas, filename) {
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 'image/png');
+  }
+
+  // ---- Event listeners ----
+
+  // Upload zone click
+  uploadZone.addEventListener('click', () => fileInput.click());
+
+  // File input change
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) {
+      handleImageUpload(e.target.files[0]);
+    }
+  });
+
+  // Drag and drop
+  uploadZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadZone.classList.add('dragover');
+  });
+  uploadZone.addEventListener('dragleave', () => {
+    uploadZone.classList.remove('dragover');
+  });
+  uploadZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadZone.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleImageUpload(e.dataTransfer.files[0]);
+    }
+  });
+
+  // Palette buttons
+  btnAdd.addEventListener('click', () => {
+    const h = Math.random() * 360;
+    const s = 0.5 + Math.random() * 0.5;
+    const l = 0.2 + Math.random() * 0.6;
+    state.palette.push(hslToRgb(h, s, l));
+    renderPalette();
+    processAndRender();
+  });
+  btnRandom.addEventListener('click', randomizePalette);
+  btnReset.addEventListener('click', resetPalette);
+
+  // Download buttons
+  btnDownloadResult.addEventListener('click', () => {
+    downloadCanvas(canvasResult, 'palette-effect.png');
+  });
+  btnDownloadGray.addEventListener('click', () => {
+    downloadCanvas(canvasGrayscale, 'grayscale.png');
+  });
+
+  // ---- Init ----
+  resetPalette();
+
+})();
+</script>
+</body>
+</html>
