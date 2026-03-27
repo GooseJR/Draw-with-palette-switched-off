@@ -264,6 +264,21 @@
     justify-content: flex-end;
   }
 
+  /* Source palette number input */
+  #source-color-count {
+    background: #0f0f23;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+    padding: 4px;
+    width: 50px;
+    text-align: center;
+  }
+  #source-color-count:focus {
+    outline: none;
+    border-color: #5c6bc0;
+  }
+
   /* Responsive */
   @media (max-width: 640px) {
     header h1 { font-size: 1.5rem; }
@@ -287,6 +302,19 @@
     <div class="text">拖放图片到此处，或点击上传</div>
   </div>
   <input type="file" id="file-input" accept="image/*">
+
+  <!-- Source palette (extracted from original image) -->
+  <div class="palette-section" id="source-palette-section" style="display:none;">
+    <div class="section-title">原图色盘</div>
+    <div class="palette-colors" id="source-palette-colors"></div>
+    <div class="palette-actions">
+      <button class="btn btn-primary" id="btn-apply-source">应用为调色板</button>
+      <button class="btn btn-secondary" id="btn-source-reextract">重新提取</button>
+      <label style="color:#aaa;font-size:0.9rem;display:flex;align-items:center;gap:4px;">
+        提取数量 <input type="number" id="source-color-count" value="6" min="2" max="20">
+      </label>
+    </div>
+  </div>
 
   <!-- Palette -->
   <div class="palette-section">
@@ -365,6 +393,7 @@
   const state = {
     sourceImage: null,  // HTMLImageElement
     palette: [],        // Array of {r, g, b}
+    sourcePalette: [],  // Array of {r, g, b} — extracted from original image
     lut: null,          // Array[256] of [r, g, b]
   };
 
@@ -402,6 +431,11 @@
   const importTextarea = document.getElementById('import-textarea');
   const btnImportCancel = document.getElementById('btn-import-cancel');
   const btnImportConfirm = document.getElementById('btn-import-confirm');
+  const sourcePaletteSection = document.getElementById('source-palette-section');
+  const sourcePaletteContainer = document.getElementById('source-palette-colors');
+  const btnApplySource = document.getElementById('btn-apply-source');
+  const btnSourceReextract = document.getElementById('btn-source-reextract');
+  const sourceColorCount = document.getElementById('source-color-count');
 
   // ---- Color utilities ----
   function computeLuminance(r, g, b) {
@@ -597,10 +631,11 @@
     applyLUT(canvasOriginal, canvasResult, lut);
   }
 
-  // ---- Palette UI ----
-  function renderPalette() {
-    paletteContainer.innerHTML = '';
-    state.palette.forEach((color, idx) => {
+  // ---- Shared swatch rendering ----
+  function renderSwatches(container, colorArray, { onChange, onDelete, minColors }) {
+    container.innerHTML = '';
+    const min = minColors || 2;
+    colorArray.forEach((color, idx) => {
       const swatch = document.createElement('div');
       swatch.className = 'swatch';
 
@@ -608,9 +643,11 @@
       input.type = 'color';
       input.value = rgbToHex(color.r, color.g, color.b);
       input.addEventListener('input', (e) => {
-        state.palette[idx] = hexToRgb(e.target.value);
-        updateLumLabels();
-        processAndRender();
+        colorArray[idx] = hexToRgb(e.target.value);
+        // Update lum label
+        const lbl = swatch.querySelector('.lum-label');
+        if (lbl) lbl.textContent = computeLuminance(colorArray[idx].r, colorArray[idx].g, colorArray[idx].b);
+        if (onChange) onChange(idx, colorArray[idx]);
       });
 
       const delBtn = document.createElement('button');
@@ -618,12 +655,12 @@
       delBtn.textContent = '\u00d7';
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (state.palette.length <= 2) return;
-        state.palette.splice(idx, 1);
-        renderPalette();
-        processAndRender();
+        if (colorArray.length <= min) return;
+        colorArray.splice(idx, 1);
+        renderSwatches(container, colorArray, { onChange, onDelete, minColors });
+        if (onDelete) onDelete(idx);
       });
-      if (state.palette.length <= 2) delBtn.style.display = 'none';
+      if (colorArray.length <= min) delBtn.style.display = 'none';
 
       const lumLabel = document.createElement('span');
       lumLabel.className = 'lum-label';
@@ -632,15 +669,37 @@
       swatch.appendChild(input);
       swatch.appendChild(delBtn);
       swatch.appendChild(lumLabel);
-      paletteContainer.appendChild(swatch);
+      container.appendChild(swatch);
     });
   }
 
-  function updateLumLabels() {
-    const labels = paletteContainer.querySelectorAll('.lum-label');
-    state.palette.forEach((color, idx) => {
-      if (labels[idx]) labels[idx].textContent = computeLuminance(color.r, color.g, color.b);
+  // ---- Palette UI ----
+  function renderPalette() {
+    renderSwatches(paletteContainer, state.palette, {
+      onChange: () => processAndRender(),
+      onDelete: () => processAndRender(),
+      minColors: 2
     });
+  }
+
+  // ---- Source palette UI ----
+  function renderSourcePalette() {
+    renderSwatches(sourcePaletteContainer, state.sourcePalette, {
+      onChange: null,
+      onDelete: null,
+      minColors: 2
+    });
+  }
+
+  function extractSourcePalette() {
+    if (!state.sourceImage) return;
+    const k = Math.max(2, Math.min(20, parseInt(sourceColorCount.value) || 6));
+    sourceColorCount.value = k;
+    const colors = extractColorsFromImage(state.sourceImage, k);
+    if (!colors) return;
+    state.sourcePalette = colors;
+    sourcePaletteSection.style.display = '';
+    renderSourcePalette();
   }
 
   function randomizePalette() {
@@ -814,6 +873,7 @@
     img.onload = () => {
       state.sourceImage = img;
       URL.revokeObjectURL(url);
+      extractSourcePalette();
       processAndRender();
     };
     img.onerror = () => {
@@ -877,6 +937,16 @@
   });
   btnRandom.addEventListener('click', randomizePalette);
   btnReset.addEventListener('click', resetPalette);
+
+  // Source palette buttons
+  btnApplySource.addEventListener('click', () => {
+    if (state.sourcePalette.length < 2) return;
+    state.palette = state.sourcePalette.map(c => ({ ...c }));
+    renderPalette();
+    processAndRender();
+  });
+  btnSourceReextract.addEventListener('click', extractSourcePalette);
+  sourceColorCount.addEventListener('change', extractSourcePalette);
 
   // Reference image import
   btnImportImage.addEventListener('click', () => refImageInput.click());
