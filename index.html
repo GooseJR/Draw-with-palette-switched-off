@@ -264,6 +264,54 @@
     justify-content: flex-end;
   }
 
+  /* Mapping mode selector */
+  .mode-selector {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .mode-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    background: #16213e;
+    border: 2px solid #333;
+    border-radius: 10px;
+    padding: 12px 16px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    flex: 1 1 200px;
+  }
+  .mode-option:hover { border-color: #5c6bc0; }
+  .mode-option:has(input:checked) { border-color: #7c83ff; background: #1a2744; }
+  .mode-option input[type="radio"] { margin-top: 3px; accent-color: #7c83ff; }
+  .mode-label {
+    font-weight: 600;
+    color: #e0e0e0;
+    display: block;
+  }
+  .mode-desc {
+    font-size: 0.8rem;
+    color: #888;
+    display: block;
+    margin-top: 2px;
+  }
+
+  /* Source palette number input */
+  #source-color-count {
+    background: #0f0f23;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+    padding: 4px;
+    width: 50px;
+    text-align: center;
+  }
+  #source-color-count:focus {
+    outline: none;
+    border-color: #5c6bc0;
+  }
+
   /* Responsive */
   @media (max-width: 640px) {
     header h1 { font-size: 1.5rem; }
@@ -288,6 +336,19 @@
   </div>
   <input type="file" id="file-input" accept="image/*">
 
+  <!-- Source palette (extracted from original image) -->
+  <div class="palette-section" id="source-palette-section" style="display:none;">
+    <div class="section-title">原图色盘</div>
+    <div class="palette-colors" id="source-palette-colors"></div>
+    <div class="palette-actions">
+      <button class="btn btn-primary" id="btn-apply-source">应用为调色板</button>
+      <button class="btn btn-secondary" id="btn-source-reextract">重新提取</button>
+      <label style="color:#aaa;font-size:0.9rem;display:flex;align-items:center;gap:4px;">
+        提取数量 <input type="number" id="source-color-count" value="6" min="2" max="20">
+      </label>
+    </div>
+  </div>
+
   <!-- Palette -->
   <div class="palette-section">
     <div class="section-title">调色板</div>
@@ -300,6 +361,23 @@
       <button class="btn btn-secondary" id="btn-reset">重置</button>
     </div>
     <input type="file" id="ref-image-input" accept="image/*" style="display:none;">
+  </div>
+
+  <!-- Mapping mode -->
+  <div class="palette-section">
+    <div class="section-title">映射模式</div>
+    <div class="mode-selector">
+      <label class="mode-option">
+        <input type="radio" name="mapping-mode" value="luminance" checked>
+        <span class="mode-label">亮度映射</span>
+        <span class="mode-desc">按灰度亮度映射，适合艺术创作效果</span>
+      </label>
+      <label class="mode-option">
+        <input type="radio" name="mapping-mode" value="color">
+        <span class="mode-label">色彩映射</span>
+        <span class="mode-desc">在 Lab 色彩空间找最近颜色，保留色相关系</span>
+      </label>
+    </div>
   </div>
 
   <!-- LUT gradient preview -->
@@ -365,6 +443,7 @@
   const state = {
     sourceImage: null,  // HTMLImageElement
     palette: [],        // Array of {r, g, b}
+    sourcePalette: [],  // Array of {r, g, b} — extracted from original image
     lut: null,          // Array[256] of [r, g, b]
   };
 
@@ -402,6 +481,11 @@
   const importTextarea = document.getElementById('import-textarea');
   const btnImportCancel = document.getElementById('btn-import-cancel');
   const btnImportConfirm = document.getElementById('btn-import-confirm');
+  const sourcePaletteSection = document.getElementById('source-palette-section');
+  const sourcePaletteContainer = document.getElementById('source-palette-colors');
+  const btnApplySource = document.getElementById('btn-apply-source');
+  const btnSourceReextract = document.getElementById('btn-source-reextract');
+  const sourceColorCount = document.getElementById('source-color-count');
 
   // ---- Color utilities ----
   function computeLuminance(r, g, b) {
@@ -437,7 +521,116 @@
     };
   }
 
-  // ---- LUT building ----
+  // ---- CIE Lab color space ----
+  // sRGB → linear RGB
+  function srgbToLinear(c) {
+    c /= 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+
+  // RGB → XYZ (D65)
+  function rgbToXyz(r, g, b) {
+    const lr = srgbToLinear(r), lg = srgbToLinear(g), lb = srgbToLinear(b);
+    return [
+      0.4124564 * lr + 0.3575761 * lg + 0.1804375 * lb,
+      0.2126729 * lr + 0.7151522 * lg + 0.0721750 * lb,
+      0.0193339 * lr + 0.1191920 * lg + 0.9503041 * lb
+    ];
+  }
+
+  // XYZ → Lab
+  const D65 = [0.95047, 1.0, 1.08883];
+  function xyzToLab(x, y, z) {
+    x /= D65[0]; y /= D65[1]; z /= D65[2];
+    const f = v => v > 0.008856 ? Math.cbrt(v) : (7.787 * v) + 16 / 116;
+    const fx = f(x), fy = f(y), fz = f(z);
+    return [
+      116 * fy - 16,
+      500 * (fx - fy),
+      200 * (fy - fz)
+    ];
+  }
+
+  function rgbToLab(r, g, b) {
+    const [x, y, z] = rgbToXyz(r, g, b);
+    return xyzToLab(x, y, z);
+  }
+
+  // Squared distance in Lab space
+  function labDistSq(lab1, lab2) {
+    const dL = lab1[0] - lab2[0];
+    const da = lab1[1] - lab2[1];
+    const db = lab1[2] - lab2[2];
+    return dL * dL + da * da + db * db;
+  }
+
+  // ---- 3D Color LUT (32×32×32) ----
+  const LUT3D_BITS = 5; // 32 levels per channel
+  const LUT3D_SIZE = 1 << LUT3D_BITS; // 32
+  const LUT3D_SHIFT = 8 - LUT3D_BITS; // 3
+
+  function build3DLUT(palette) {
+    if (palette.length === 0) return null;
+
+    // Pre-convert palette to Lab
+    const paletteLab = palette.map(c => rgbToLab(c.r, c.g, c.b));
+
+    // Build 32×32×32 table: each entry = [r, g, b] of nearest palette color
+    const size = LUT3D_SIZE;
+    const lut = new Uint8Array(size * size * size * 3);
+
+    for (let ri = 0; ri < size; ri++) {
+      const r8 = (ri << LUT3D_SHIFT) | (1 << (LUT3D_SHIFT - 1)); // center of bin
+      for (let gi = 0; gi < size; gi++) {
+        const g8 = (gi << LUT3D_SHIFT) | (1 << (LUT3D_SHIFT - 1));
+        for (let bi = 0; bi < size; bi++) {
+          const b8 = (bi << LUT3D_SHIFT) | (1 << (LUT3D_SHIFT - 1));
+          const lab = rgbToLab(r8, g8, b8);
+
+          // Find nearest palette color in Lab
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let p = 0; p < paletteLab.length; p++) {
+            const d = labDistSq(lab, paletteLab[p]);
+            if (d < bestDist) { bestDist = d; bestIdx = p; }
+          }
+
+          const offset = (ri * size * size + gi * size + bi) * 3;
+          lut[offset] = palette[bestIdx].r;
+          lut[offset + 1] = palette[bestIdx].g;
+          lut[offset + 2] = palette[bestIdx].b;
+        }
+      }
+    }
+    return lut;
+  }
+
+  function applyColorMapping(srcCanvas, dstCanvas, lut3d) {
+    const w = srcCanvas.width, h = srcCanvas.height;
+    dstCanvas.width = w;
+    dstCanvas.height = h;
+    const srcCtx = srcCanvas.getContext('2d');
+    const dstCtx = dstCanvas.getContext('2d');
+    const srcData = srcCtx.getImageData(0, 0, w, h);
+    const dstData = dstCtx.createImageData(w, h);
+    const src = srcData.data;
+    const dst = dstData.data;
+    const size = LUT3D_SIZE;
+
+    for (let i = 0; i < src.length; i += 4) {
+      const ri = src[i] >> LUT3D_SHIFT;
+      const gi = src[i + 1] >> LUT3D_SHIFT;
+      const bi = src[i + 2] >> LUT3D_SHIFT;
+      const offset = (ri * size * size + gi * size + bi) * 3;
+      dst[i] = lut3d[offset];
+      dst[i + 1] = lut3d[offset + 1];
+      dst[i + 2] = lut3d[offset + 2];
+      dst[i + 3] = src[i + 3];
+    }
+    dstCtx.putImageData(dstData, 0, 0);
+  }
+
+  // ---- 1D Luminance LUT building ----
   function buildLUT(palette) {
     if (palette.length === 0) return null;
 
@@ -581,26 +774,49 @@
   }
 
   // ---- Main processing ----
-  function processAndRender() {
-    const lut = buildLUT(state.palette);
-    state.lut = lut;
-
-    renderLUTBar(lut);
-
-    if (!state.sourceImage || !lut) return;
-
-    previewSection.style.display = '';
-    downloadSection.style.display = '';
-
-    drawImageToCanvas(state.sourceImage, canvasOriginal);
-    renderGrayscale(canvasOriginal, canvasGrayscale);
-    applyLUT(canvasOriginal, canvasResult, lut);
+  function getMappingMode() {
+    const checked = document.querySelector('input[name="mapping-mode"]:checked');
+    return checked ? checked.value : 'luminance';
   }
 
-  // ---- Palette UI ----
-  function renderPalette() {
-    paletteContainer.innerHTML = '';
-    state.palette.forEach((color, idx) => {
+  function processAndRender() {
+    const mode = getMappingMode();
+
+    if (mode === 'luminance') {
+      const lut = buildLUT(state.palette);
+      state.lut = lut;
+      renderLUTBar(lut);
+
+      if (!state.sourceImage || !lut) return;
+
+      previewSection.style.display = '';
+      downloadSection.style.display = '';
+      lutPreviewSection.style.display = '';
+
+      drawImageToCanvas(state.sourceImage, canvasOriginal);
+      renderGrayscale(canvasOriginal, canvasGrayscale);
+      applyLUT(canvasOriginal, canvasResult, lut);
+    } else {
+      // Color-space mapping in Lab
+      lutPreviewSection.style.display = 'none';
+
+      if (!state.sourceImage || state.palette.length === 0) return;
+
+      previewSection.style.display = '';
+      downloadSection.style.display = '';
+
+      drawImageToCanvas(state.sourceImage, canvasOriginal);
+      renderGrayscale(canvasOriginal, canvasGrayscale);
+      const lut3d = build3DLUT(state.palette);
+      if (lut3d) applyColorMapping(canvasOriginal, canvasResult, lut3d);
+    }
+  }
+
+  // ---- Shared swatch rendering ----
+  function renderSwatches(container, colorArray, { onChange, onDelete, minColors }) {
+    container.innerHTML = '';
+    const min = minColors || 2;
+    colorArray.forEach((color, idx) => {
       const swatch = document.createElement('div');
       swatch.className = 'swatch';
 
@@ -608,9 +824,11 @@
       input.type = 'color';
       input.value = rgbToHex(color.r, color.g, color.b);
       input.addEventListener('input', (e) => {
-        state.palette[idx] = hexToRgb(e.target.value);
-        updateLumLabels();
-        processAndRender();
+        colorArray[idx] = hexToRgb(e.target.value);
+        // Update lum label
+        const lbl = swatch.querySelector('.lum-label');
+        if (lbl) lbl.textContent = computeLuminance(colorArray[idx].r, colorArray[idx].g, colorArray[idx].b);
+        if (onChange) onChange(idx, colorArray[idx]);
       });
 
       const delBtn = document.createElement('button');
@@ -618,12 +836,12 @@
       delBtn.textContent = '\u00d7';
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (state.palette.length <= 2) return;
-        state.palette.splice(idx, 1);
-        renderPalette();
-        processAndRender();
+        if (colorArray.length <= min) return;
+        colorArray.splice(idx, 1);
+        renderSwatches(container, colorArray, { onChange, onDelete, minColors });
+        if (onDelete) onDelete(idx);
       });
-      if (state.palette.length <= 2) delBtn.style.display = 'none';
+      if (colorArray.length <= min) delBtn.style.display = 'none';
 
       const lumLabel = document.createElement('span');
       lumLabel.className = 'lum-label';
@@ -632,15 +850,37 @@
       swatch.appendChild(input);
       swatch.appendChild(delBtn);
       swatch.appendChild(lumLabel);
-      paletteContainer.appendChild(swatch);
+      container.appendChild(swatch);
     });
   }
 
-  function updateLumLabels() {
-    const labels = paletteContainer.querySelectorAll('.lum-label');
-    state.palette.forEach((color, idx) => {
-      if (labels[idx]) labels[idx].textContent = computeLuminance(color.r, color.g, color.b);
+  // ---- Palette UI ----
+  function renderPalette() {
+    renderSwatches(paletteContainer, state.palette, {
+      onChange: () => processAndRender(),
+      onDelete: () => processAndRender(),
+      minColors: 2
     });
+  }
+
+  // ---- Source palette UI ----
+  function renderSourcePalette() {
+    renderSwatches(sourcePaletteContainer, state.sourcePalette, {
+      onChange: null,
+      onDelete: null,
+      minColors: 2
+    });
+  }
+
+  function extractSourcePalette() {
+    if (!state.sourceImage) return;
+    const k = Math.max(2, Math.min(20, parseInt(sourceColorCount.value) || 6));
+    sourceColorCount.value = k;
+    const colors = extractColorsFromImage(state.sourceImage, k);
+    if (!colors) return;
+    state.sourcePalette = colors;
+    sourcePaletteSection.style.display = '';
+    renderSourcePalette();
   }
 
   function randomizePalette() {
@@ -814,6 +1054,7 @@
     img.onload = () => {
       state.sourceImage = img;
       URL.revokeObjectURL(url);
+      extractSourcePalette();
       processAndRender();
     };
     img.onerror = () => {
@@ -878,6 +1119,16 @@
   btnRandom.addEventListener('click', randomizePalette);
   btnReset.addEventListener('click', resetPalette);
 
+  // Source palette buttons
+  btnApplySource.addEventListener('click', () => {
+    if (state.sourcePalette.length < 2) return;
+    state.palette = state.sourcePalette.map(c => ({ ...c }));
+    renderPalette();
+    processAndRender();
+  });
+  btnSourceReextract.addEventListener('click', extractSourcePalette);
+  sourceColorCount.addEventListener('change', extractSourcePalette);
+
   // Reference image import
   btnImportImage.addEventListener('click', () => refImageInput.click());
   refImageInput.addEventListener('change', (e) => {
@@ -926,6 +1177,11 @@
     renderPalette();
     processAndRender();
     hideImportModal();
+  });
+
+  // Mapping mode change
+  document.querySelectorAll('input[name="mapping-mode"]').forEach(radio => {
+    radio.addEventListener('change', processAndRender);
   });
 
   // Download buttons
